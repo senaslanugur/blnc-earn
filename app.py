@@ -255,7 +255,7 @@ if 'earnings_results' in st.session_state:
             # Bilanço Alt Sekmeleri
             sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["📉 Olay Analizi (T±10)", "💰 Gelir Tablosu", "⚖️ Bilanço", "💵 Nakit Akışı"])
             
-           with sub_tab1:
+            with sub_tab1:
                 st.markdown(f"#### {selected_ticker} Geçmiş Bilanço Etkisi (Son 5 Yıl)")
                 if event_data is not None:
                     fig = go.Figure()
