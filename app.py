@@ -139,9 +139,15 @@ def fetch_financial_tables(ticker):
 @st.cache_data(ttl=86400)
 def analyze_event_study(ticker, days_window=10):
     stock = yf.Ticker(ticker)
-    hist = stock.history(period="5y")
-    ed = stock.earnings_dates
     
+    # yfinance'in hatalı veri kazımasından doğan KeyError çökmelerini engellemek için try-except kullanıyoruz
+    try:
+        hist = stock.history(period="5y")
+        ed = stock.earnings_dates
+    except Exception:
+        # Hata fırlatan hisseyi atla
+        return None
+        
     if ed is None or ed.empty or hist.empty:
         return None
         
@@ -168,6 +174,12 @@ def analyze_event_study(ticker, days_window=10):
 
     if not event_data:
         return None
+        
+    df_events = pd.DataFrame(event_data)
+    df_events['Average_Effect'] = df_events.mean(axis=1)
+    return df_events
+
+
         
     df_events = pd.DataFrame(event_data)
     df_events['Average_Effect'] = df_events.mean(axis=1)
