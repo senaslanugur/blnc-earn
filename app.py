@@ -219,10 +219,10 @@ def plot_fundamental_trends(fin_data, ticker):
     except Exception:
         return None
 
-# --- YENİ EKLENEN: OTOMATİK TARAMA FONKSİYONU ---
+# --- YENİ EKLENEN: OTOMATİK TARAMA FONKSİYONU (SÜRPRİZ ORANI İLE GÜNCELLENDİ) ---
 def auto_scan_opportunities(earnings_list):
     results = []
-    progress_text = "Hisselerin tarihsel davranışları analiz ediliyor..."
+    progress_text = "Hisselerin tarihsel davranışları ve kazanç sürprizleri analiz ediliyor..."
     my_bar = st.progress(0, text=progress_text)
     total = len(earnings_list)
     
@@ -239,7 +239,7 @@ def auto_scan_opportunities(earnings_list):
             avg_effect = df_events['Average_Effect']
             avg_pre_ret = avg_effect.loc[0] - avg_effect.loc[-10]
             
-            # Kesinlik Oranını Hesapla (Geçmişte bu ortalama hareketi kaç kere yaptı?)
+            # 1. Kesinlik Oranını Hesapla
             wins = 0
             for col in past_cols:
                 event_pre_ret = df_events.loc[0, col] - df_events.loc[-10, col]
@@ -250,7 +250,23 @@ def auto_scan_opportunities(earnings_list):
                     
             win_rate = (wins / len(past_cols)) * 100
             
-            # Bilanço Sonrası Zirve ve Düşüş Analizi
+            # 2. Sürpriz Oranını (Surprise %) Hesapla
+            avg_surprise_str = "Veri Yok"
+            try:
+                stock = yf.Ticker(ticker)
+                ed = stock.earnings_dates
+                if ed is not None and not ed.empty and 'Surprise(%)' in ed.columns:
+                    # Sadece geçmiş bilançoları al
+                    past_ed = ed[ed.index < pd.Timestamp.now(tz='UTC')]
+                    if not past_ed.empty:
+                        avg_surp = past_ed['Surprise(%)'].mean()
+                        if pd.notna(avg_surp):
+                            # yfinance sürpriz oranını ondalık verir (Örn: 0.05 -> %5), 100 ile çarpıyoruz.
+                            avg_surprise_str = f"%{avg_surp * 100:.1f}"
+            except Exception:
+                pass # Sürpriz verisi çekilemezse akışı bozma
+            
+            # 3. Bilanço Sonrası Zirve ve Düşüş Analizi
             post_segment = avg_effect.loc[0:10]
             peak_day = post_segment.idxmax()
             
@@ -268,6 +284,7 @@ def auto_scan_opportunities(earnings_list):
                 "Hisse": ticker,
                 "Bilanço Tarihi": date,
                 "Kesinlik": f"%{win_rate:.0f}",
+                "Ort. Sürpriz": avg_surprise_str, # Yeni Eklenen Metrik
                 "Analiz Edilen Bilanço Sayısı": len(past_cols),
                 "Yapay Zeka Analiz Özeti": f"{pre_text} {post_text}",
                 "_win_rate_val": win_rate,
@@ -280,9 +297,11 @@ def auto_scan_opportunities(earnings_list):
         df_res = pd.DataFrame(results)
         # Kesinlik oranına ve ardından getirinin büyüklüğüne göre yüksekten düşüğe sırala
         df_res = df_res.sort_values(by=['_win_rate_val', '_avg_pre_val'], ascending=[False, False])
+        # Gizli sıralama sütunlarını kaldır
         df_res = df_res.drop(columns=['_win_rate_val', '_avg_pre_val'])
         return df_res
     return pd.DataFrame()
+
 
 # --- KULLANICI ARAYÜZÜ (SIDEBAR) ---
 st.sidebar.header("⚙️ Tarama Ayarları")
