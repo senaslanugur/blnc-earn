@@ -170,6 +170,44 @@ def analyze_event_study(ticker, days_window=10):
     if not event_data:
         return None
         
+    def plot_fundamental_trends(fin_data, ticker):
+        """Fiyat hareketinin nedenini açıklamak için temel finansal trendleri çizer."""
+        try:
+            # Verileri tarihe göre eskiden yeniye sırala
+            inc = fin_data['income'].T.sort_index() if not fin_data['income'].empty else pd.DataFrame()
+            cf = fin_data['cashflow'].T.sort_index() if not fin_data['cashflow'].empty else pd.DataFrame()
+            
+            fig = make_subplots(
+                rows=3, cols=1, 
+                shared_xaxes=True,
+                vertical_spacing=0.1,
+                subplot_titles=("1. Büyüme: Toplam Gelir vs Net Kâr", "2. Verimlilik: Net Kâr Marjı (%)", "3. Gerçeklik: Faaliyet Nakit Akışı")
+            )
+            
+            # 1 & 2: Gelir, Net Kar ve Marj
+            if 'Total Revenue' in inc.columns and 'Net Income' in inc.columns:
+                years = inc.index.strftime('%Y')
+                
+                fig.add_trace(go.Bar(x=years, y=inc['Total Revenue'], name="Toplam Gelir", marker_color='lightblue'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=years, y=inc['Net Income'], name="Net Kâr", mode='lines+markers', line=dict(color='green', width=3)), row=1, col=1)
+                
+                margin = (inc['Net Income'] / inc['Total Revenue']) * 100
+                fig.add_trace(go.Scatter(x=years, y=margin, name="Kâr Marjı (%)", mode='lines+markers', line=dict(color='purple', width=3)), row=2, col=1)
+                
+            # 3: Nakit Akışı (Kârın kalitesini ölçer)
+            if not cf.empty and 'Operating Cash Flow' in cf.columns:
+                cf_years = cf.index.strftime('%Y')
+                fig.add_trace(go.Bar(x=cf_years, y=cf['Operating Cash Flow'], name="Faaliyet Nakit Akışı", marker_color='orange'), row=3, col=1)
+                
+            fig.update_layout(height=700, template='plotly_white', showlegend=True, hovermode="x unified")
+            fig.update_yaxes(title_text="Para Birimi", row=1, col=1)
+            fig.update_yaxes(title_text="Yüzde (%)", row=2, col=1)
+            fig.update_yaxes(title_text="Para Birimi", row=3, col=1)
+            
+            return fig
+        except Exception as e:
+            return None
+          
     df_events = pd.DataFrame(event_data)
     df_events['Average_Effect'] = df_events.mean(axis=1)
     return df_events
@@ -217,7 +255,7 @@ if 'earnings_results' in st.session_state:
             # Bilanço Alt Sekmeleri
             sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["📉 Olay Analizi (T±10)", "💰 Gelir Tablosu", "⚖️ Bilanço", "💵 Nakit Akışı"])
             
-            with sub_tab1:
+           with sub_tab1:
                 st.markdown(f"#### {selected_ticker} Geçmiş Bilanço Etkisi (Son 5 Yıl)")
                 if event_data is not None:
                     fig = go.Figure()
@@ -229,18 +267,23 @@ if 'earnings_results' in st.session_state:
                                              line=dict(color='royalblue', width=4), name='Ortalama Etki'))
                     
                     fig.add_vline(x=0, line_width=2, line_dash="dash", line_color="red", annotation_text="T=0 (Bilanço Günü)")
-                    fig.update_layout(height=550, title="Bilanço Açıklanmadan Önceki ve Sonraki Kümülatif Getiri (%)",
+                    fig.update_layout(height=500, title="Bilanço Açıklanmadan Önceki ve Sonraki Kümülatif Getiri (%)",
                                       xaxis_title="Günler (T-10 / T+10)", yaxis_title="Getiri (%)", template="plotly_white")
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("Bu hisse için yeterli tarihsel bilanço etkisi verisi bulunamadı.")
-
-            with sub_tab2:
-                st.markdown(f"#### {selected_ticker} Yıllık Gelir Tablosu")
-                if not fin_data['income'].empty:
-                    st.dataframe(fin_data['income'].style.format("{:,.0f}"), use_container_width=True)
+                
+                # --- YENİ EKLENEN KISIM: FİNANSAL ARKA PLAN ---
+                st.divider()
+                st.markdown(f"#### 🔍 Fiyatlamanın Arka Planı: {selected_ticker} Temel Trend Analizi")
+                st.caption("Piyasanın bilançoya verdiği tepkinin rasyonel gerekçelerini bu finansal trendlerde arayabilirsiniz.")
+                
+                fund_fig = plot_fundamental_trends(fin_data, selected_ticker)
+                if fund_fig is not None and len(fund_fig.data) > 0:
+                    st.plotly_chart(fund_fig, use_container_width=True)
                 else:
-                    st.warning("Veri bulunamadı.")
+                    st.warning("Bu hisse için standart formatta yıllık gelir veya nakit akışı verisi bulunamadı (Özellikle BIST hisselerinde veri eksikliği olabilir).")
+
 
             with sub_tab3:
                 st.markdown(f"#### {selected_ticker} Yıllık Bilanço")
