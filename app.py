@@ -16,7 +16,6 @@ st.title("📈 Kurumsal Bilanço & Halka Arz Analizörü")
 # --- TRADINGVIEW API FONKSİYONLARI ---
 @st.cache_data(ttl=3600)
 def get_fast_earnings_calendar(target_month, target_year, market="america"):
-    """Seçili ay için bilanço açıklayacak hisseleri TV API üzerinden saniyeler içinde çeker."""
     first_day = datetime.datetime(target_year, target_month, 1)
     last_day_num = calendar.monthrange(target_year, target_month)[1]
     last_day = datetime.datetime(target_year, target_month, last_day_num, 23, 59, 59)
@@ -68,7 +67,6 @@ def get_fast_earnings_calendar(target_month, target_year, market="america"):
 
 @st.cache_data(ttl=3600)
 def get_fast_ipo_calendar(target_month, target_year, market="america"):
-    """Seçili ay için planlanan Halka Arz (IPO) verilerini çeker."""
     first_day = datetime.datetime(target_year, target_month, 1)
     last_day_num = calendar.monthrange(target_year, target_month)[1]
     last_day = datetime.datetime(target_year, target_month, last_day_num, 23, 59, 59)
@@ -176,7 +174,6 @@ def analyze_event_study(ticker, days_window=10):
     return df_events
 
 def plot_fundamental_trends(fin_data, ticker):
-    """Fiyat hareketinin nedenini açıklamak için temel finansal trendleri çizer. Algoritmadan bağımsız çalışır."""
     try:
         inc = fin_data['income'].T.sort_index() if not fin_data['income'].empty else pd.DataFrame()
         cf = fin_data['cashflow'].T.sort_index() if not fin_data['cashflow'].empty else pd.DataFrame()
@@ -210,6 +207,71 @@ def plot_fundamental_trends(fin_data, ticker):
     except Exception:
         return None
 
+# --- YENİ EKLENEN: OTOMATİK TARAMA FONKSİYONU ---
+def auto_scan_opportunities(earnings_list):
+    results = []
+    progress_text = "Hisselerin tarihsel davranışları analiz ediliyor..."
+    my_bar = st.progress(0, text=progress_text)
+    total = len(earnings_list)
+    
+    for i, (ticker, date) in enumerate(earnings_list):
+        my_bar.progress((i + 1) / total, text=f"Analiz ediliyor: {ticker} ({i+1}/{total})")
+        
+        df_events = analyze_event_study(ticker, days_window=10)
+        
+        if df_events is not None and not df_events.empty:
+            past_cols = [c for c in df_events.columns if c != 'Average_Effect']
+            if len(past_cols) < 3: # En az 3 geçmiş bilanço verisi şartı
+                continue
+                
+            avg_effect = df_events['Average_Effect']
+            avg_pre_ret = avg_effect.loc[0] - avg_effect.loc[-10]
+            
+            # Kesinlik Oranını Hesapla (Geçmişte bu ortalama hareketi kaç kere yaptı?)
+            wins = 0
+            for col in past_cols:
+                event_pre_ret = df_events.loc[0, col] - df_events.loc[-10, col]
+                if avg_pre_ret > 0 and event_pre_ret > 0:
+                    wins += 1
+                elif avg_pre_ret < 0 and event_pre_ret < 0:
+                    wins += 1
+                    
+            win_rate = (wins / len(past_cols)) * 100
+            
+            # Bilanço Sonrası Zirve ve Düşüş Analizi
+            post_segment = avg_effect.loc[0:10]
+            peak_day = post_segment.idxmax()
+            
+            if avg_pre_ret > 0:
+                pre_text = f"Bilanço açıklanmadan önceki 10 gün içinde ortalama %{avg_pre_ret:.1f} ARTAR."
+            else:
+                pre_text = f"Bilanço açıklanmadan önceki 10 gün içinde ortalama %{abs(avg_pre_ret):.1f} DÜŞER."
+                
+            if peak_day == 0:
+                post_text = "Açıklandıktan hemen sonra (T+0) düşmeye başlar (Kâr realizasyonu)."
+            else:
+                post_text = f"Açıklandıktan sonra T+{peak_day}. güne kadar (ortalama %{(post_segment.loc[peak_day] - post_segment.loc[0]):.1f} daha) yükselir, sonrasında düşmeye başlar."
+            
+            results.append({
+                "Hisse": ticker,
+                "Bilanço Tarihi": date,
+                "Kesinlik": f"%{win_rate:.0f}",
+                "Analiz Edilen Bilanço Sayısı": len(past_cols),
+                "Yapay Zeka Analiz Özeti": f"{pre_text} {post_text}",
+                "_win_rate_val": win_rate,
+                "_avg_pre_val": abs(avg_pre_ret)
+            })
+            
+    my_bar.empty()
+    
+    if results:
+        df_res = pd.DataFrame(results)
+        # Kesinlik oranına ve ardından getirinin büyüklüğüne göre yüksekten düşüğe sırala
+        df_res = df_res.sort_values(by=['_win_rate_val', '_avg_pre_val'], ascending=[False, False])
+        df_res = df_res.drop(columns=['_win_rate_val', '_avg_pre_val'])
+        return df_res
+    return pd.DataFrame()
+
 # --- KULLANICI ARAYÜZÜ (SIDEBAR) ---
 st.sidebar.header("⚙️ Tarama Ayarları")
 market_choice = st.sidebar.selectbox("Piyasa Seçimi", ["BIST (Türkiye)", "NASDAQ & NYSE (ABD)"])
@@ -237,12 +299,25 @@ if 'earnings_results' in st.session_state:
         e_results = st.session_state['earnings_results']
         
         if not e_results:
-            st.warning(f"Seçilen ayda bilanço açıklayacak hisse bulunamadı.")
+            st.warning("Seçilen ayda bilanço açıklayacak hisse bulunamadı.")
         else:
             st.success(f"{st.session_state['scanned_month']}. Ay Bilanço Takvimi: {len(e_results)} Hisse Bulundu!")
             
+            # YENİ MODÜL: OTOMATİK TARAYICI (Mevcut yapıyı bozmadan üst kısma eklendi)
+            with st.expander("🤖 Tüm Hisseleri Otomatik Analiz Et (Fırsat Tarayıcı)", expanded=False):
+                st.info("Bu özellik listedeki tüm hisselerin geçmiş bilançolarını tarayarak tutarlılığı en yüksek olan fırsatları sıralar. Hisse sayısına bağlı olarak tarama 1-2 dakika sürebilir.")
+                if st.button("Taramayı Başlat"):
+                    auto_df = auto_scan_opportunities(e_results)
+                    if not auto_df.empty:
+                        st.dataframe(auto_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("Yeterli veriye sahip model bulunamadı.")
+            
+            st.divider()
+            
+            # MEVCUT YAPI: MANUEL HİSSE SEÇİMİ VE DETAYLI ANALİZ
             ticker_options = {f"{t} (Tarih: {d})": t for t, d in e_results}
-            selected_option = st.selectbox("Detaylı Analiz İçin Hisse Seçin", list(ticker_options.keys()))
+            selected_option = st.selectbox("Detaylı Grafik İncelemesi İçin Hisse Seçin", list(ticker_options.keys()))
             selected_ticker = ticker_options[selected_option]
             
             with st.spinner(f"{selected_ticker} geçmiş verileri ve finansalları çekiliyor..."):
@@ -252,7 +327,6 @@ if 'earnings_results' in st.session_state:
             sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["📉 Olay Analizi (T±10)", "💰 Gelir Tablosu", "⚖️ Bilanço", "💵 Nakit Akışı"])
             
             with sub_tab1:
-                # Orijinal Olay Analizi Bölümü (Ana algoritmaya müdahale edilmemiştir)
                 st.markdown(f"#### {selected_ticker} Geçmiş Bilanço Etkisi (Son 5 Yıl)")
                 if event_data is not None:
                     fig = go.Figure()
@@ -270,7 +344,6 @@ if 'earnings_results' in st.session_state:
                 else:
                     st.info("Bu hisse için yeterli tarihsel bilanço etkisi verisi bulunamadı.")
                 
-                # Yeni Eklenen Temel Finansal Trend Analizi Bölümü
                 st.divider()
                 st.markdown(f"#### 🔍 Fiyatlamanın Arka Planı: {selected_ticker} Temel Trend Analizi")
                 st.caption("Piyasanın bilançoya verdiği tepkinin rasyonel gerekçelerini bu bağımsız finansal trendlerde arayabilirsiniz.")
